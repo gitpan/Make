@@ -4,18 +4,29 @@ use 5.005;  # Need look-behind assertions
 use Getopt::Std;
 use Make;
 
-getopts('gnpf:j:C:');
+my %opt;
 
-my @opt = ($opt_g,$opt_f,$opt_j,$opt_C,$opt_p,$opt_n);
+getopts('Dgnpf:j:C:',\%opt);
 
-my $info = Make->new(GNU      => $opt_g, 
+my $info = Make->new(GNU      => $opt{'g'}, 
                      Override => { MAKE => "$^X $0" },
-                     Makefile => $opt_f, 
-                     Jobs     => $opt_j,
-                     Dir      => $opt_C);
+                     Makefile => $opt{'f'}, 
+                     Jobs     => $opt{'j'},
+                     Dir      => $opt{'C'});
 
-$info->Print(@ARGV)  if ($opt_p);
-if ($opt_n)
+if ($opt{'D'})
+ {
+  require Data::Dumper;
+  print Data::Dumper::DumperX($info);
+  exit;
+ }
+
+if ($opt{'p'})
+ {
+  $info->Print(@ARGV);  
+  exit;
+ }
+if ($opt{'n'})
  {
   $info->Script(@ARGV);
  }

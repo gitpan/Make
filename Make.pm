@@ -1,6 +1,7 @@
 package Make::Rule::Vars;
 use Carp;
 use strict;
+my $generation = 0; # lexical cross-package scope used!
 
 # Package to handle 'magic' variables pertaining to rules e.g. $@ $* $^ $?
 # by using tie to this package 'subsvars' can work with array of 
@@ -56,20 +57,21 @@ sub Base
 sub Info
 {
  return shift->target->Info;
-}
+}       
 
 sub depend
 {
  my $self = shift;
  if (@_)
-  {
+  {            
+   my $name = $self->Name;
    my $dep = shift;
    confess "dependants $dep are not an array reference" unless ('ARRAY' eq ref $dep); 
    my $file;
    foreach $file (@$dep)
     {
      unless (exists $self->{DEPHASH}{$file})
-      {
+      {    
        $self->{DEPHASH}{$file} = 1;
        push(@{$self->{DEPEND}},$file);
       }
@@ -114,6 +116,7 @@ sub command
 #
 sub out_of_date
 {
+ my $array = wantarray;
  my $self  = shift;
  my $info  = $self->Info;
  my @dep = ();
@@ -125,12 +128,15 @@ sub out_of_date
    my $date = $info->date($dep);
    $count++;
    if (!defined($date) || !defined($tdate) || $date < $tdate)
-    {
+    {       
+     # warn $self->Name." ood wrt ".$dep."\n";
+     return 1 unless $array;
      push(@dep,$dep);
     }
   }
+ return @dep if $array;
  # Note special case of no dependencies means it is always  out-of-date!
- return (wantarray) ? @dep : (!$count || @dep);
+ return !$count;
 }
 
 #
@@ -172,7 +178,10 @@ sub clone
  my ($self,$target) = @_;
  my %hash = %$self;
  $hash{TARGET} = $target;
- return bless \%hash,ref $self;
+ $hash{DEPEND} = [@{$self->{DEPEND}}];
+ $hash{DEPHASH} = {%{$self->{DEPHASH}}};
+ my $obj = bless \%hash,ref $self;
+ return $obj;
 }
 
 sub new
@@ -180,7 +189,6 @@ sub new
  my $class = shift;
  my $target = shift;
  my $kind   = shift;
- # return shift->clone($target) if (@_ == 1);
  my $self = bless { TARGET => $target,             # parent target (left hand side)
                     KIND => $kind,                 # : or ::
                     DEPEND => [], DEPHASH => {},   # right hand args
@@ -241,12 +249,11 @@ sub Make
 {
  my $self = shift;
  my $file;
- return unless $self->out_of_date;
+ return unless ($self->out_of_date);
  my @cmd = $self->exp_command;
  my $info = $self->Info;
  if (@cmd)
   {
-   # print "# ",$self->Name,"\n";
    foreach my $file ($self->exp_command)
     {
      $file =~ s/^([\@\s-]*)//;
@@ -272,7 +279,7 @@ sub Print
  my $self = shift;
  my $file;
  print $self->Name,' ',$self->{KIND},' ';
- foreach $file ($self->exp_depend)
+ foreach $file ($self->depend)
   {
    print " \\\n   $file";
   }
@@ -322,7 +329,8 @@ sub phony
 {
  my $self = shift;
  return $self->Info->phony($self->Name);
-}
+}   
+
 
 sub colon
 {
@@ -333,7 +341,8 @@ sub colon
     {
      my $dep = $self->{COLON};
      if (@_ == 1)
-      {
+      {            
+       # merging an existing rule
        my $other = shift;
        $dep->depend(scalar $other->depend);
        $dep->command(scalar $other->command);
@@ -425,9 +434,11 @@ sub recurse
  my ($self,$method,@args) = @_;
  my $info = $self->Info;
  my $rule;
+ my $i = 0;
  foreach $rule ($self->colon,$self->dcolon)
   {
    my $dep;
+   my $j = 0;
    foreach $dep ($rule->exp_depend)
     {
      my $t = $info->{Depend}{$dep};
@@ -437,8 +448,11 @@ sub recurse
       }
      else
       {
-       my $dir = cwd(); 
-       die "Cannot recurse $method - no target $dep in $dir" unless ($info->exists($dep));
+       unless ($info->exists($dep))
+        {
+         my $dir = cwd();                                      
+         die "Cannot recurse $method - no target $dep in $dir" 
+        }
       }
     }
   }
@@ -491,7 +505,9 @@ use Config;
 use Cwd;
 use File::Spec;
 use vars qw($VERSION);
-$VERSION = '0.03';
+$VERSION = '1.00';
+
+my %date;
 
 sub phony
 {
@@ -592,7 +608,7 @@ sub dotrules
    my $r = delete $self->{Dot}{$t};
    if (defined $r)
     {
-     my @rule = ($r->colon) ? $r->colon->depend : ();
+     my @rule = ($r->colon) ? ($r->colon->depend) : ();
      if (@rule)
       {
        delete $self->{Dot}{$t->Name};
@@ -624,13 +640,28 @@ sub dotrules
 #
 # Return 'full' pathname of name given directory info. 
 # - may be the place to do vpath stuff ?
-#
+#               
+
+my %pathname;
+
 sub pathname
 {
  my ($self,$name) = @_;
- return $name if File::Spec->file_name_is_absolute($name);
- $name =~ s,^\./,,;
- return File::Spec->catfile($self->{Dir},$name);
+ my $hash = $self->{'Pathname'}; 
+ unless (exists $hash->{$name})
+  {
+   if (File::Spec->file_name_is_absolute($name))
+    {
+     $hash->{$name} = $name;
+    }
+   else
+    {
+     $name =~ s,^\./,,;                             
+     $hash->{$name} = File::Spec->catfile($self->{Dir},$name);
+    }
+  }
+ return $hash->{$name};
+ 
 }
 
 #
@@ -640,9 +671,11 @@ sub date
 {
  my ($self,$name) = @_;
  my $path = $self->pathname($name);
- my $r = -M $path;
- # print STDERR "$path date is $r\n" if (defined $r);
- return $r;
+ unless (exists $date{$path})
+  {
+   $date{$path} = -M $path;
+  }
+ return $date{$path};
 }
 
 #
@@ -654,8 +687,7 @@ sub exists
 {
  my ($self,$name) = @_;
  return 1 if (exists $self->{Depend}{$name});
- my $path = $self->pathname($name);
- return 1 if (-e $path);
+ return 1 if defined $self->date($name);
  # print STDERR "$name '$path' does not exist\n";
  return 0;
 }
@@ -732,7 +764,7 @@ sub needs
 #
 # Substitute $(xxxx) and $x style variable references
 # - should handle ${xxx} as well
-# - recurses still they all go rather than doing one level,
+# - recurses till they all go rather than doing one level,
 #   which may need fixing
 #
 sub subsvars
@@ -1064,6 +1096,8 @@ sub PrintVars
 sub exec
 {
  my $self = shift;
+ undef %date;
+ $generation++;
  if ($^O eq 'MSWin32')
   {
    my $cwd = cwd();
@@ -1153,7 +1187,7 @@ sub new
  my ($class,%args) = @_;
  unless (defined $args{Dir})
   {
-   chomp($args{Dir} = cwd());
+   chomp($args{Dir} = getcwd());
   }
  my $self = bless { %args, 
                    Pattern  => {},  # GNU style %.o : %.c 
@@ -1163,6 +1197,7 @@ sub new
                    Depend   => {},  # hash of targets
                    Targets  => [],  # ordered version so we can find 1st one
                    Pass     => 0,   # incremented each sweep
+                   Pathname => {},  # cache of expanded names
                    Need     => {},
                    Done     => {},
                  },$class;

@@ -1,4 +1,4 @@
-Copyright (c) 1996-1998 Nick Ing-Simmons. All rights reserved.
+Copyright (c) 1996-1999 Nick Ing-Simmons. All rights reserved.
 This program is free software; you can redistribute it and/or
 modify it under the same terms as Perl itself.
 
@@ -15,6 +15,5 @@ perl -Mblib pmake install
 
 No other make required!
 
-This version can build Tk800.011 (one of the more complicated extensions)
-on both UNIX (Solaris2) and Win32. But it is very slow - I think it is 
-re-testing dependancies far too often.
+This version can build Tk800.015 (one of the more complicated extensions)
+on both UNIX (Solaris2) and Win32. 
