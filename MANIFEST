@@ -1,0 +1,7 @@
+MANIFEST
+MANIFEST.SKIP
+Make.pm
+Makefile.PL
+bmake
+cleanup
+pmake
