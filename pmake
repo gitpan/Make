@@ -1,17 +1,14 @@
 #!/usr/local/bin/perl -w
 
-use FindBin;
 use Getopt::Std;
-
-BEGIN { require lib; import lib "$FindBin::Dir/blib" };
-require Make;
+use Make;
 
 getopts('gnpf:j:C:');
 
 my @opt = ($opt_g,$opt_f,$opt_j,$opt_C,$opt_p,$opt_n);
 
 my $info = Make->new(GNU      => $opt_g, 
-                     Override => { MAKE => $0 },
+                     Override => { MAKE => "$^X $0" },
                      Makefile => $opt_f, 
                      Jobs     => $opt_j,
                      Dir      => $opt_C);

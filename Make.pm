@@ -470,6 +470,10 @@ package Make;
 use Carp;
 use strict;
 use Config;
+use Cwd;
+use File::Spec;
+use vars qw($VERSION);
+$VERSION = '0.02';
 
 sub phony
 {
@@ -606,9 +610,9 @@ sub dotrules
 sub pathname
 {
  my ($self,$name) = @_;
- return $name if ($name =~ m#^/#);
+ return $name if File::Spec->file_name_is_absolute($name);
  $name =~ s,^\./,,;
- return $self->{Dir}."/".$name;
+ return File::Spec->catfile($self->{Dir},$name);
 }
 
 #
@@ -901,6 +905,7 @@ Makefile:
      while (<$makefile>)
       {
        next if (/^\s*#/);
+       next if (/^\s*$/);
        last unless (/^\t/);
        chop($_);         
        if (/\\$/)        
@@ -1015,19 +1020,31 @@ sub PrintVars
 sub exec
 {
  my $self = shift;
- my $pid  = fork;
- if ($pid)
+ if ($^O eq 'MSWin32')
   {
-   waitpid $pid,0;
-   return $?;
+   my $cwd = cwd();
+   my $ret;
+   chdir $self->{Dir};
+   $ret = system(@_);
+   chdir $cwd;
+   return $ret;
   }
  else
   {
-   my $dir = $self->{Dir}; 
-   chdir($dir) || die "Cannot cd to $dir";
-   # handle leading VAR=value here ?
-   # To handle trivial cases like ': libpTk.a' force using /bin/sh
-   exec("/bin/sh","-c",@_) || confess "Cannot exec ".join(' ',@_);
+   my $pid  = fork;
+   if ($pid)
+    {
+     waitpid $pid,0;
+     return $?;
+    }
+   else
+    {
+     my $dir = $self->{Dir}; 
+     chdir($dir) || die "Cannot cd to $dir";
+     # handle leading VAR=value here ?
+     # To handle trivial cases like ': libpTk.a' force using /bin/sh
+     exec("/bin/sh","-c",@_) || confess "Cannot exec ".join(' ',@_);
+    }
   }
 }
 
@@ -1092,7 +1109,7 @@ sub new
  my ($class,%args) = @_;
  unless (defined $args{Dir})
   {
-   chomp($args{Dir} = `pwd`);
+   chomp($args{Dir} = cwd());
   }
  my $self = bless { %args, 
                    Pattern  => {},  # GNU style %.o : %.c 
