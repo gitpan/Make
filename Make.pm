@@ -85,13 +85,24 @@ sub command
   {
    my $cmd = shift;
    confess "commands $cmd are not an array reference" unless ('ARRAY' eq ref $cmd); 
-   if (@{$self->{COMMAND}} && @$cmd)
+   if (@$cmd)
     {
-     warn "Command for ".$self->Name," redefined";
-     print STDERR "Was:",join("\n",@{$self->{COMMAND}}),"\n";
-     print STDERR "Now:",join("\n",@$cmd),"\n";
+     if (@{$self->{COMMAND}})
+      {
+       warn "Command for ".$self->Name," redefined";
+       print STDERR "Was:",join("\n",@{$self->{COMMAND}}),"\n";
+       print STDERR "Now:",join("\n",@$cmd),"\n";
+      }
+     $self->{COMMAND} = $cmd;
     }
-   $self->{COMMAND} = $cmd;
+   else
+    {
+     if (@{$self->{COMMAND}})
+      { 
+       # warn "Command for ".$self->Name," retained";
+       # print STDERR "Was:",join("\n",@{$self->{COMMAND}}),"\n";
+      }
+    } 
   }
  return (wantarray) ? @{$self->{COMMAND}} : $self->{COMMAND};
 }
@@ -137,7 +148,7 @@ sub exp_depend
 #
 # Return commands to apply rule with variables expanded
 # - No pathname processing needed, commands should always chdir()
-#   to logical place (at least till we get very cleaver as bourne shell parsing).
+#   to logical place (at least till we get very clever at bourne shell parsing).
 # - May need vpath processing
 #
 sub exp_command
@@ -203,7 +214,7 @@ sub find_commands
 }
 
 #
-# Spew a bourne shell script to perfom the 'make' e.g. make -n 
+# Spew a shell script to perfom the 'make' e.g. make -n 
 #
 sub Script
 {
@@ -213,7 +224,8 @@ sub Script
  if (@cmd)
   {
    my $file;
-   print "# ",$self->Name,"\n";
+  my $com = ($^O eq 'MSWin32') ? 'rem ': '# ';
+   print  $com,$self->Name,"\n";
    foreach $file ($self->exp_command)
     {
      $file =~ s/^[\@\s-]*//;
@@ -234,9 +246,8 @@ sub Make
  my $info = $self->Info;
  if (@cmd)
   {
-   my $file;
    # print "# ",$self->Name,"\n";
-   foreach $file ($self->exp_command)
+   foreach my $file ($self->exp_command)
     {
      $file =~ s/^([\@\s-]*)//;
      my $prefix = $1;
@@ -284,6 +295,7 @@ sub Print
 package Make::Target;
 use Carp;
 use strict;
+use Cwd;
 
 #
 # Intermediate 'target' package
@@ -369,6 +381,13 @@ sub Info
  return shift->{MAKEFILE};
 }
 
+sub ProcessColon
+{
+ my ($self) = @_;
+ my $c = $self->colon;
+ $c->find_commands if $c;
+}
+
 sub ExpandTarget
 {
  my ($self) = @_;
@@ -376,18 +395,15 @@ sub ExpandTarget
  my $info   = $self->Info;
  my $colon  = delete $self->{COLON};
  my $dcolon = delete $self->{DCOLON};
- my $expand;
- foreach $expand (split(/\s+/,$info->subsvars($target)))
+ foreach my $expand (split(/\s+/,$info->subsvars($target)))
   {
    next unless defined($expand);
    my $t = $info->Target($expand);
-   my $d;
    if (defined $colon)
     {
      $t->colon($colon); 
-     $t->colon->find_commands;
     }
-   foreach $d (@{$dcolon})
+   foreach my $d (@{$dcolon})
     {
      $t->dcolon($d);
     }
@@ -421,7 +437,8 @@ sub recurse
       }
      else
       {
-       die "Cannot recurse $method - no target $dep" unless ($info->exists($dep));
+       my $dir = cwd(); 
+       die "Cannot recurse $method - no target $dep in $dir" unless ($info->exists($dep));
       }
     }
   }
@@ -467,13 +484,14 @@ sub Print
 }
 
 package Make;
+use 5.005;  # Need look-behind assertions
 use Carp;
 use strict;
 use Config;
 use Cwd;
 use File::Spec;
 use vars qw($VERSION);
-$VERSION = '0.02';
+$VERSION = '0.03';
 
 sub phony
 {
@@ -724,14 +742,14 @@ sub subsvars
  my @var = @_;
  push(@var,$self->{Override},$self->{Vars},\%ENV);
  croak("Trying to subsitute undef value") unless (defined $_); 
- while (/\$\(([^()]+)\)/ || /\$([<\@^?*])/)
+ while (/(?<!\$)\$\(([^()]+)\)/ || /(?<!\$)\$([<\@^?*])/)
   {
-   my ($var,$head,$tail) = ($1,$`,$');
+   my ($key,$head,$tail) = ($1,$`,$');
    my $value;
-   if ($var =~ /^([\w._]+|\S)$/)
+   if ($key =~ /^([\w._]+|\S)(?::(.*))?$/)
     {
-     my $hash;
-     foreach $hash (@var)
+     my ($var,$op) = ($1,$2);
+     foreach my $hash (@var)
       {
        $value = $hash->{$var};
        if (defined $value)
@@ -744,21 +762,34 @@ sub subsvars
        die "$var not defined in '$_'" unless (length($var) > 1); 
        $value = '';
       }
-     # print STDERR "$var = $value\n";
+     if (defined $op)
+      {
+       if ($op =~ /^s(.).*\1.*\1/)
+        {
+         local $_ = $self->subsvars($value);
+         $op =~ s/\\/\\\\/g;
+         eval $op.'g';
+         $value = $_;
+        }
+       else
+        {
+         die "$var:$op = '$value'\n"; 
+        }   
+      }
     }
-   elsif ($var =~ /wildcard\s*(.*)$/)
+   elsif ($key =~ /wildcard\s*(.*)$/)
     {
      $value = join(' ',glob($self->pathname($1)));
     }
-   elsif ($var =~ /shell\s*(.*)$/)
+   elsif ($key =~ /shell\s*(.*)$/)
     {
      $value = join(' ',split('\n',`$1`));
     }
-   elsif ($var =~ /addprefix\s*([^,]*),(.*)$/)
+   elsif ($key =~ /addprefix\s*([^,]*),(.*)$/)
     {
      $value = join(' ',map($1 . $_,split('\s+',$2)));
     }
-   elsif ($var =~ /notdir\s*(.*)$/)
+   elsif ($key =~ /notdir\s*(.*)$/)
     {
      my @files = split(/\s+/,$1);
      foreach (@files)
@@ -767,7 +798,7 @@ sub subsvars
       }
      $value = join(' ',@files);
     }
-   elsif ($var =~ /dir\s*(.*)$/)
+   elsif ($key =~ /dir\s*(.*)$/)
     {
      my @files = split(/\s+/,$1);
      foreach (@files)
@@ -776,16 +807,25 @@ sub subsvars
       }
      $value = join(' ',@files);
     }
-   elsif ($var =~ /^subst\s+([^,]*),([^,]*),(.*)$/)
+   elsif ($key =~ /^subst\s+([^,]*),([^,]*),(.*)$/)
     {
      my ($a,$b) = ($1,$2);
      $value = $3;
      $a =~ s/\./\\./;
      $value =~ s/$a/$b/; 
     }
+   elsif ($key =~ /^mktmp,(\S+)\s*(.*)$/)
+    {
+     my ($file,$content) = ($1,$2);
+     open(TMP,">$file") || die "Cannot open $file:$!";
+     $content =~ s/\\n//g;
+     print TMP $content;
+     close(TMP);
+     $value = $file;
+    }
    else
     {
-     warn "Cannot evaluate $var in '$_'\n";
+     warn "Cannot evaluate '$key' in '$_'\n";
     }
    $_ = "$head$value$tail";
   }
@@ -963,13 +1003,17 @@ sub pseudos
   }
 }
 
+
 sub ExpandTarget
 {
  my $self = shift;
- my $t;
- foreach $t (@{$self->{'Targets'}})
+ foreach my $t (@{$self->{'Targets'}})
   {
    $t->ExpandTarget;
+  }
+ foreach my $t (@{$self->{'Targets'}})
+  {
+   $t->ProcessColon;
   }
 }
 
@@ -1049,7 +1093,7 @@ sub exec
 }
 
 sub NextPass { shift->{Pass}++ }
-sub pass { shift->{Pass} }
+sub pass     { shift->{Pass} }
 
 sub apply
 {
@@ -1153,7 +1197,7 @@ Make - module for processing makefiles
 
 Make->new creates an object if C<new(Makefile =E<gt> $file)> is specified
 then it is parsed. If not the usual makefile Makefile sequence is 
-used. (If GNU => 1 is passed to new then GNUmakefile is look for first.) 
+used. (If GNU => 1 is passed to new then GNUmakefile is looked for first.) 
 
 C<$make-E<gt>Make(target...)> 'makes' the target(s) specified
 (or the first 'real' target in the makefile).
@@ -1238,4 +1282,5 @@ __DATA__
 .y.c:
 	$(YACC) $<
 	mv y.tab.c $@
+
 

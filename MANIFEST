@@ -1,8 +1,9 @@
-Changes				What has changed
-MANIFEST			This file
-MANIFEST.SKIP			Things to to put here
-Make.pm				The module
-Makefile.PL			How to build/install
-README				Copyright notice and install instructions
-bmake				Sample "rules" (not used)
-pmake				A make clone using the module
+Changes
+MANIFEST
+MANIFEST.SKIP
+Make.pm
+Makefile.PL
+README
+bmake
+pmake
+t/make.t
